@@ -16,25 +16,43 @@ import expenseRoutes from "./routes/expense.routes.js";
 import incomeRoutes from "./routes/income.routes.js";
 
 // Ensure required environment variables are set
-if (!process.env.JWT_SECRET_KEY || !process.env.MONGODB_CONNECTION || !process.env.SESSION_SECRET || !process.env.REDIS_URL) {
-    console.error("❌ Missing required environment variables. Check .env file.");
+const requiredEnvVars = [
+    "MONGODB_CONNECTION",
+    "PORT",
+    "JWT_SECRET_KEY",
+    "SESSION_SECRET",
+    "REDIS_HOST",
+    "REDIS_PORT",
+    "REDIS_PASSWORD"
+];
+
+const missingEnvVars = requiredEnvVars.filter((envVar) => !process.env[envVar]);
+
+if (missingEnvVars.length > 0) {
+    console.error(`Missing required environment variables: ${missingEnvVars.join(", ")}`);
     process.exit(1);
 }
 
-// Connect to Database
+// Connect to MongoDB
 connectToDb().catch((err) => {
-    console.error("❌ Database Connection Error:", err.message);
+    console.error("Database Connection Error:", err.message);
     process.exit(1);
 });
 
 const app = express();
 
 // Redis Connection
-const redis = new Redis(process.env.REDIS_URL);
+const redis = new Redis({
+    host: process.env.REDIS_HOST,
+    port: process.env.REDIS_PORT,
+    password: process.env.REDIS_PASSWORD,
+    retryStrategy: (times) => Math.min(times * 50, 2000) // Exponential backoff for reconnecting
+});
+
 redis.ping()
-    .then(() => console.log("✅ Connected to Redis"))
+    .then(() => console.log("Connected to Redis"))
     .catch(err => {
-        console.error("❌ Redis connection error:", err);
+        console.error("Redis connection error:", err);
         process.exit(1);
     });
 
@@ -50,7 +68,7 @@ app.use(
             if (!origin || allowedOrigins.includes(origin)) {
                 callback(null, true);
             } else {
-                console.error(`❌ CORS policy violation from: ${origin}`);
+                console.error(`CORS policy violation from: ${origin}`);
                 callback(new Error("CORS policy violation"));
             }
         },
@@ -65,12 +83,16 @@ app.use(
         secret: process.env.SESSION_SECRET,
         resave: false,
         saveUninitialized: false,
-        store: MongoStore.create({ mongoUrl: process.env.MONGODB_CONNECTION }),
+        store: MongoStore.create({ 
+            mongoUrl: process.env.MONGODB_CONNECTION,
+            collectionName: "sessions",
+            ttl: 14 * 24 * 60 * 60 // 14 days
+        }),
         cookie: {
             httpOnly: true,
             secure: process.env.NODE_ENV === "production",
             sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-            maxAge: 24 * 60 * 60 * 1000,
+            maxAge: 24 * 60 * 60 * 1000, // 1 day
         },
     })
 );
@@ -107,30 +129,30 @@ const authenticateToken = (req, res, next) => {
             next();
         });
     } catch (error) {
-        console.error("❌ Authentication Error:", error.message);
+        console.error("Authentication Error:", error.message);
         return res.status(500).json({ error: "Internal Server Error" });
     }
 };
 
 // Root Route
 app.get("/", (req, res) => {
-    res.send("🚀 Welcome to TrackItAll Backend!");
+    res.send("Welcome to TrackItAll Backend!");
 });
 
 // Global Error Handling Middleware
 app.use((err, req, res, next) => {
-    console.error("❌ Server Error:", err.message);
+    console.error("Server Error:", err.message);
     res.status(err.status || 500).json({ error: err.message || "Internal Server Error" });
 });
 
 // Graceful Shutdown
 process.on("uncaughtException", (err) => {
-    console.error("❌ Uncaught Exception:", err);
+    console.error("Uncaught Exception:", err);
     process.exit(1);
 });
 
 process.on("unhandledRejection", (err) => {
-    console.error("❌ Unhandled Promise Rejection:", err);
+    console.error("Unhandled Promise Rejection:", err);
     process.exit(1);
 });
 
